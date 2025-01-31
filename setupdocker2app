@@ -1,0 +1,216 @@
+Jika ingin menginstal CodeIgniter 3 dan Laravel di Docker dengan versi PHP dan MySQL yang berbeda, kita bisa membuat beberapa container dengan konfigurasi masing-masing.
+======================================================================================================
+1. Struktur Direktori
+Kita akan membuat dua container PHP terpisah untuk CodeIgniter 3 dan Laravel, masing-masing dengan versi PHP dan MySQL yang berbeda.
+
+docker-web/
+│── docker-compose.yml
+│── .env
+│── ci3/             # CodeIgniter 3 (PHP 7.4, MySQL 5.7)
+│── laravel/         # Laravel (PHP 8.2, MySQL 8.0)
+│── mysql-ci3/       # Data MySQL CI3
+│── mysql-laravel/   # Data MySQL Laravel
+└── nginx/           # Konfigurasi Nginx
+======================================================================================================
+2. Buat docker-compose.yml
+Buat file docker-compose.yml di dalam folder docker-web/:
+======================================================================================================
+version: '3.8'
+
+services:
+  # CodeIgniter 3 (PHP 7.4)
+  ci3_app:
+    image: php:7.4-fpm
+    container_name: ci3_app
+    working_dir: /var/www/ci3
+    volumes:
+      - ./ci3:/var/www/ci3
+    depends_on:
+      - mysql_ci3
+
+  # Laravel (PHP 8.2)
+  laravel_app:
+    image: php:8.2-fpm
+    container_name: laravel_app
+    working_dir: /var/www/laravel
+    volumes:
+      - ./laravel:/var/www/laravel
+    depends_on:
+      - mysql_laravel
+
+  # Nginx
+  nginx:
+    image: nginx:latest
+    container_name: nginx_server
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./ci3:/var/www/ci3
+      - ./laravel:/var/www/laravel
+    depends_on:
+      - ci3_app
+      - laravel_app
+
+  # MySQL untuk CodeIgniter 3 (MySQL 5.7)
+  mysql_ci3:
+    image: mysql:5.7
+    container_name: mysql_ci3
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: ci3_db
+      MYSQL_USER: ci3_user
+      MYSQL_PASSWORD: ci3_password
+    ports:
+      - "3307:3306"
+    volumes:
+      - ./mysql-ci3:/var/lib/mysql
+
+  # MySQL untuk Laravel (MySQL 8.0)
+  mysql_laravel:
+    image: mysql:8.0
+    container_name: mysql_laravel
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: laravel_db
+      MYSQL_USER: laravel_user
+      MYSQL_PASSWORD: laravel_password
+    ports:
+      - "3308:3306"
+    volumes:
+      - ./mysql-laravel:/var/lib/mysql
+
+  # phpMyAdmin untuk monitoring database
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: phpmyadmin
+    restart: always
+    depends_on:
+      - mysql_ci3
+      - mysql_laravel
+    environment:
+      PMA_HOSTS: mysql_ci3,mysql_laravel
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "8081:80"
+======================================================================================================
+
+3. Konfigurasi Nginx
+Buat folder nginx/ lalu buat file nginx.conf di dalamnya:
+
+======================================================================================================
+worker_processes 1;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include       mime.types;
+    sendfile        on;
+
+    server {
+        listen 80;
+        root /var/www/ci3;
+        index index.php index.html index.htm;
+        server_name ci3.localhost;
+
+        location / {
+            try_files $uri $uri/ /index.php?$args;
+        }
+
+        location ~ \.php$ {
+            include fastcgi_params;
+            fastcgi_pass ci3_app:9000;
+            fastcgi_index index.php;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        }
+    }
+
+    server {
+        listen 80;
+        root /var/www/laravel/public;
+        index index.php index.html index.htm;
+        server_name laravel.localhost;
+
+        location / {
+            try_files $uri $uri/ /index.php?$query_string;
+        }
+
+        location ~ \.php$ {
+            include fastcgi_params;
+            fastcgi_pass laravel_app:9000;
+            fastcgi_index index.php;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        }
+    }
+}
+======================================================================================================
+4. Install CodeIgniter 3
+Buka terminal dan masuk ke dalam folder ci3/, lalu jalankan:
+
+wget https://github.com/bcit-ci/CodeIgniter/archive/refs/heads/3.x.zip
+unzip 3.x.zip
+mv CodeIgniter-3.x/* .
+rm -rf CodeIgniter-3.x 3.x.zip
+Konfigurasi database di application/config/database.php:
+
+php
+Copy
+Edit
+$db['default'] = array(
+    'dsn'	=> '',
+    'hostname' => 'mysql_ci3',
+    'username' => 'ci3_user',
+    'password' => 'ci3_password',
+    'database' => 'ci3_db',
+    'dbdriver' => 'mysqli',
+    'dbprefix' => '',
+    'pconnect' => FALSE,
+    'db_debug' => (ENVIRONMENT !== 'production'),
+    'cache_on' => FALSE,
+    'cachedir' => '',
+    'char_set' => 'utf8',
+    'dbcollat' => 'utf8_general_ci',
+);
+======================================================================================================
+5. Install Laravel
+Masuk ke folder laravel/ lalu jalankan:
+docker run --rm -v $(pwd):/app composer create-project --prefer-dist laravel/laravel .
+
+Edit file .env Laravel:
+DB_CONNECTION=mysql
+DB_HOST=mysql_laravel
+DB_PORT=3306
+DB_DATABASE=laravel_db
+DB_USERNAME=laravel_user
+DB_PASSWORD=laravel_password
+======================================================================================================
+6. Jalankan Docker
+Jalankan semua container dengan:
+docker-compose up -d
+Periksa apakah container berjalan:
+docker ps
+======================================================================================================
+7. Akses Aplikasi
+CodeIgniter 3: http://ci3.localhost:8080
+Laravel: http://laravel.localhost:8080
+phpMyAdmin: http://localhost:8081
+======================================================================================================
+8. Tambahkan Hostname (Opsional)
+Agar Laravel dan CodeIgniter bisa diakses dengan domain lokal, tambahkan entri berikut ke file hosts:
+127.0.0.1 ci3.localhost
+127.0.0.1 laravel.localhost
+Linux/macOS: Edit /etc/hosts
+Windows: Edit C:\Windows\System32\drivers\etc\hosts
+======================================================================================================
+9. Cek Log jika Ada Error
+
+Jika ada masalah, jalankan:
+docker-compose logs -f
+
+Untuk masuk ke container:
+docker exec -it ci3_app bash
+docker exec -it laravel_app bash
